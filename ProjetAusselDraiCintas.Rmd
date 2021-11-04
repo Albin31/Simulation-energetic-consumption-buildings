@@ -1,0 +1,995 @@
+---
+title: "Projet ModIA"
+author: "B. Aussel, A. Cintas, B. Drai"
+output:
+  pdf_document:
+    fig_caption: yes
+    fig_height: 4.5
+    fig_width: 6
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+subtitle: Analyse de données - Eléments de modélisation statistique
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(fig.align = "center", echo = FALSE, cache = FALSE)
+```
+
+```{r, include=FALSE}
+library(ggplot2)
+library(lattice)
+library(leaps)
+library(MASS)
+library(corrplot)
+library(rgl)
+library(FactoMineR)
+library(rpart)
+library(rpart.plot)
+library(partykit)
+library(randomForest)
+library(factoextra)
+library(bestglm)
+library(VGAM)
+library(rminer)
+library(caret)
+require(gridExtra)
+```
+
+#Introduction
+
+Ces dernières décennies, la prise de conscience collective sur le respect de l'environnement a fait prendre au gouvernement certaines mesures. Le diagnostic de performance énergétique (DPE) des bâtiments est une de ces mesures. Elle permet d'évaluer les bâtiments selon leur consommation énergétique et leur émission de gazs à effet de serre. Ainsi, le DPE classe les bâtiments selon sept classes, de A à G, où A représente un bâtiment avec  une très bonne performance énergétique et une faible émission de $CO_2$. 
+
+Mis à part le côté environmental lié à ce diagnostic, il y a aussi un réel impact financier. En effet, dans certaines villes de France, les logements classés A coûtent en moyenne $68$% plus cher que ceux classés E. 
+
+Il y a donc une certaine nécessité à construire dans le futur des logements verts afin de répondre aux normes environnementales mais aussi à la demande des acheteurs qui considèrent de plus en plus ce critère dans leur choix de logement. 
+
+L'objectif de notre étude est de prédire la classe énergétique des bâtiments à partir de certaines de leurs caractéristiques comme les différentes superficies, l'orientation ou encore la surface vitrée. 
+
+Pour cela, nous utiliserons les données de quelques centaines de bâtiments. Nous serons tout d'abord amenés à analyser ces données afin de les comprendre et de distinguer les liens pré-existants entre variables. Nous progresserons au long de l'étude en comparant 2 approches différentes de modélisation : la régression et la classification de l'énergie émise par les bâtiments. A cette fin, nous expliquerons cette variable avec des modèles linéaires et non linéaires. Nous utiliserons donc des régréssions linéaires, des analyses de covariance, des arbres de classification et de régression mais aussi des fôrets aléatoires. 
+
+Nous analyserons ces modèles en détails, tenterons de les simplifier et de les optimiser afin que la prédiction qui en découle soit la meilleure possible. 
+
+Finalement, nous les comparerons entre eux dans le but d'identifier le modèle qui prédit le mieux l'énergie émise et qui est le plus simple à mettre en oeuvre.  
+
+#Analyse des données
+
+L'objectif de cette première partie est de comprendre les données que nous modéliserons. Pour cela, nous ferons une analyse unidimensionnelle de chacune de nos variables de notre jeu de données. Puis dans un deuxième temps, nous analyserons les variables par paires afin de voir s'il existe des liens entre notre variable. Nous examinerons également les variables qui ont l'air d'influer le plus sur notre variable de sortie. Finalement, nous ferons du clustering sur nos données afin de les regrouper en classes. 
+
+
+&nbsp;
+
+```{r pressure, echo=TRUE}
+df <- read.csv("DataEnergy_Student_V2.csv")
+```
+
+On observe un jeu de données contenant `r dim(df)[1]`  individus décrits par `r dim(df)[2]` variables.
+
+Quatre d'entre elles sont qualitatives: *Orientation*, *Energy.efficiency* , *Overall.height*  et *Glazing.area.distr*.
+
+Les six autres sont quantitatives : *Surface.area*, *Wall.area*, *Roof.area* *Glazing.area*, *Energy* et *Relative.compactness*.
+
+##Analyse des variables qualitatives
+
+Dans cette sous-partie, nous étudierons les variables qualitatives une à une. 
+
+###Orientation
+```{r, fig.height = 2.4, fig.width = 3.6, fig.align="center"}
+df$orientation=as.factor(df$orientation)
+barplot(table(df$orientation),main="Orientation")
+```
+
+La variable *Orientation* est équitablement répartie entre ses 4 directions ( Nord, Sud, Est, Ouest). Il y a donc 192 individus orientés dans chaque direction.  
+
+###Energy.Efficiency
+
+```{r}
+df$Energy.efficiency = as.factor(df$Energy.efficiency)
+effEnergy = as.vector(table(df$Energy.efficiency))
+Freq = effEnergy/length(df$Energy.efficiency)
+df1 = data.frame(modalite = levels(df$Energy.efficiency), Eff = effEnergy, Freq = Freq)
+```
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(data.frame(modalite = levels(df$Energy.efficiency), Eff = effEnergy, Freq = Freq))
+```
+
+```{r, fig.height = 3, fig.width = 4.5, fig.align="center"}
+ggplot(df1, aes(x = "", y = Freq, fill = modalite)) + geom_bar(width = 1, stat = "identity") + 
+  coord_polar("y", start=0) + geom_text(aes(label = paste0(round(Freq*100), "%")), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values=c("#55DDE0", "#33658A", "#2F4858", "#F6AE2D", "#F26419", "#999999","#007007")) + 
+  ggtitle("Efficacité Energétique") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+La variable *Energy.efficiency*  possède 8 "notes" de dépense en énergie entre A et G.
+On remarque qu'environ $51$% des appartements ont une très bonne dépense d'énergie (A,B ou C), tandis que $10$% appartiennent à la catégorie D qui représente une dépense d'énergie moyenne. Enfin, environ $39$% d'entre eux ont une mauvaise dépense en énergie (E, F ou G).
+
+###Overall.Height
+
+```{r, fig.height = 2, fig.width = 4, fig.align="center"}
+height_factor=as.factor(df$Overall.height)
+FreqO=as.vector(table(height_factor))/length(height_factor)
+
+df2 = data.frame(type = levels(height_factor), value = as.vector(FreqO))
+ggplot(df2, aes(x = "", y = value, fill = type)) + geom_bar(width = 1, stat = "identity") + 
+  ggtitle("Hauteur totale") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+La variable *Overall.height* contient 2 mesures différentes : 3.5m et 7m.
+Elle est équitablement répartie : 384 bâtiments sont de hauteur 3.5m et 384 sont de hauteur 7m.
+
+###Glazing.area.distr
+
+```{r, fig.height = 2, fig.width = 4, fig.align="center"}
+df$Glazing.area.distr=(as.factor(df$Glazing.area.distr))
+ggplot(df) + geom_bar(aes(x = Glazing.area.distr, y = ..prop.., group = 1)) + ggtitle("Glazing.area.distr") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+La variable *Glazing.area.distr* représente 6 catégories de disposition différentes de fênetres :
+
++ 0: il n'y a pas de fenêtre. 
++ 1: c'est une répartition uniforme 25% de chaque coté.
++ 2: 55% des fenetres au nord et 15% sur les autres cotés. 
++ 3: 55% des fenetres à l'est et 15% sur les autres cotés
++ 4: 55% des fenetres au sud et 15% sur les autres cotés. 
++ 5: 55% des fenetres à l'ouest et 15% sur les autres cotés
+
+On constate qu'il y a $48$ appartements qui n'ont pas de fênetre soit une proportion de $6.25$%.
+Les autres catégories sont équitablement réparties : il y a 144 individus différents dans chaque catégorie soit $18.75$%.
+
+##Analyse des variables quantitatives 
+
+Dans cette sous-partie, nous étudierons les variables quantitatives une à une. 
+
+
+###Glazing.area
+
+La variable *Glazing.area* représente la proportion de surface vitrée par rapport à la surface du sol.
+
+Nous avons pu remarquer dans l'affichage des données que la variable $Glazing.area$ contient des valeurs très proches de 0. Il se trouve que ces individus ont un $Glazing.area.distr$ nul. On décide, par soucis de précision, de mettre à 0 ces lignes là pour avoir une variable plus homogène. 
+
+```{r}
+df$Glazing.area[which(df$Glazing.area.distr==0)] = 0
+```
+
+```{r, fig.height = 3, fig.width = 5, fig.align="center"}
+par(mfrow = c(1,2))
+hist(df$Glazing.area, main="Histogramme", breaks = seq(0.0, 0.5, by = 0.1))
+boxplot(df$Glazing.area, main="Boxplot")
+mtext("Proportion de fenêtres", cex = 1.5, side = 1, line = -17, outer = TRUE)
+```
+
+La proportion de surface vitrée par rapport à la surface du sol varie donc entre $0$% et $42$% avec une majorité des individus ayant cette proportion comprise entre $20$% et $30$%.
+
+###Relative.Compactness
+
+```{r, fig.height = 3, fig.width = 5, fig.align="center"}
+par(mfrow = c(1,2))
+hist(df$Relative.compactness, main="Histogramme")
+boxplot(df$Relative.compactness,  main = "Boxplot")
+mtext("Compacité des matériaux", cex = 1.5, side = 1, line = -17, outer = TRUE)
+```
+
+La compacité des matériaux varie entre environ $0.6$ et $0.99$, avec une majorité des batiments ayant une compacité comprise entre $0.6$ et $0.8$. 
+
+###Surface.Area
+
+```{r, fig.height = 3, fig.width = 5, fig.align="center"}
+par(mfrow = c(1,2))
+hist(df$Surface.area, main = "Histogramme")
+boxplot(df$Surface.area, main = "Boxplot")
+mtext("Superficie", cex = 1.5, side = 1, line = -17, outer = TRUE)
+```
+
+La **surface** du sol des batiments semble être équirépartie autour de la moyenne de $671.3m^2$ avec des valeurs allant d'environ $500m^2$ à $826m^2$.
+
+###Wall.Area
+
+```{r, fig.height = 3, fig.width = 5, fig.align="center"}
+par(mfrow = c(1,2))
+hist(df$Wall.area, main = "Histogramme")
+boxplot(df$Wall.area, main = "Boxplot")
+mtext("Superficie Murale", cex = 1.5, side = 1, line = -17, outer = TRUE)
+```
+
+On remarque ici que la surface des murs, en excluant les quelques outliers, est principalement répartie autour de la médiane qui vaut $315.8m^2$, avec une majorité de batiments ayant une surface comprise entre $300m^2$ et $350m^2$.
+
+###Roof.Area
+
+```{r, fig.height = 3, fig.width = 5, fig.align="center"}
+par(mfrow = c(1,2))
+hist(df$Roof.area, main = "Histogramme")
+boxplot(df$Roof.area, main = "Boxplot")
+mtext("Surface du toit", cex = 1.5, side = 1, line = -17, outer = TRUE)
+```
+
+On ne remarque aucune symétrie ici. Deux modes distincts semblent se détacher : 
+
+- Des toits d'aire comprise entre $100m^2$ et $160m^2$.
+- Des toits d'aire comprise entre $210m^2$ et $230m^2$.
+
+On a plus précisément : `r sum(df$Roof.area > 180)` bâtiments avec une surface de toit supérieure à $180m^2$ et donc `r length(df$Roof.area)- sum(df$Roof.area > 180)` batiments avec une surface de toit inférieure à $180m^2$.
+
+###Energy
+
+```{r, fig.height = 3, fig.width = 5, fig.align="center"}
+par(mfrow = c(1,2))
+hist(df$Energy, main= "Histogramme")
+boxplot(df$Energy, main= "Boxplot")
+mtext("Energie", cex = 1.5, side = 1, line = -17, outer = TRUE)
+```
+
+La charge énergétique semble répartie de manière bi-modale : 
+
+- un premier mode entre 20 et 40 
+- un deuxième entre 50 et 80
+
+##Analyse Bidimensionnelle
+
+Nous allons à présent nous intéresser à l'étude bidimensionnelle des variables. Dans un premier temps, nous chercherons des relations entre toutes les variables quantitatives afin de simplifier notre jeu de données. Dans un second temps, nous étudierons plus précisément le poids des variables sur notre variable de sortie *Energy*.
+
+###Entre toutes les variables 
+
+Commençons par visualiser les tracés par paire de chacune des variables ainsi que le diagramme des correlations entre les variables quantitatives. 
+```{r, fig.align="center", fig.height = 4, fig.width = 5}
+quanti <- c(1:5, 7, 9)
+quali <- c(6, 8, 10)
+pairs(df[, quanti])
+``` 
+
+```{r, fig.height = 3.5, fig.width = 4.67, fig.align="center"}
+M<-cor(df[, -c(6, 8, 10)])
+corrplot(M, method = "ellipse")
+```
+
+
+Nous pouvons relever que *Glazing.area* est la seule variable qui n'a aucune corrélation avec les autres variables. Les tracés bidimensionnelles de cette variable montrent qu'elle est divisée en facteur avec les autres variables. 
+
+De plus, il semble y avoir une forte relation linéaire entre les variables *Relative.compactness* et *Surface.area*. En effet, le tracé bidimensionnelle se rapproche d'une droite de pente négative et leur corrélation est très proche de $-1$. 
+
+Nous pouvons aussi remarquer une forte corrélation entre les variables de surface, à savoir *Surface.area*, *Wall.area* et *Roof.area*. Il est donc judicieux de chercher une relation linéaire entre ces variables. Nous pouvons intuitionner d'après les significations de ces trois variables que :
+$$Surface.area = 2*Roof.area \ + \ Wall.area$$
+
+Vérifions le : `sum(abs(2*df$Roof.area + df$Wall.area - df$Surface.area))` = `r sum(abs(2*df$Roof.area + df$Wall.area - df$Surface.area))`
+
+En sommant les données selon cette formule, on a bien un résultat très proche de $0$. On en conclut que nous pouvons déduire la variable *Surface.area* des deux autres.
+
+###Avec la sortie Energy
+
+Intéressons nous plus particulièrement à l'impact des différentes variables sur notre variable d'output *Energy*.
+
+```{r, fig.height = 3, fig.width = 6}
+par(mfrow = c(3, 3), mar=c(3.8,0.5,0.5,0.5))
+plot(Energy ~ ., data = df, ask = FALSE)
+```
+
+
+On remarque que l'orientation n'a aucun impact sur l'efficacité energétique. En effet, le graphique obtenu montre que pour les différentes orientations, l'efficacité energétique ne présente aucune différence.
+
+La variable *Overall.height* a visiblement un lien avec *Energy*. En effet, pour la modalité $3.5m$, *Energy* varie entre $5$ et $45$ alors que pour la modalité $7.0m$ elle varie entre $35$ et $90$. 
+
+De même, il semblerait que les variables *Relative.compactness* et *Surface.area* impactent notre sortie car on peut remarquer que les valeurs sont divisées en deux paliers. Pour *Relative.compactness*, ces niveaux sont autour de $30$ et $60$ et pour *Surface.area* ils sont autour de $30$ et $70$.
+
+Notons que le lien entre *Energy* et *Energy.efficiency* est biaisé car la variable *Energy.efficiency* est la version qualitative de *Energy* en la divisant en différentes classes energétiques.
+
+Nous pouvons aussi remarquer que la variable *Glazing.area.distr* a le même effet sur *Energy* pour les valeurs ${1,2,3,4,5}$. Nous avons donc tout interêt à transformer cette variable en une variable bi-modale prenant les valeurs :
+
++ 1 lorsque le bâtiment possède des fenêtres; 
++ 0 lorsqu'il n'y en a pas.
+
+
+```{r}
+df$Glazing.area.distr[df$Glazing.area.distr == "0"] <- "0"
+df$Glazing.area.distr[df$Glazing.area.distr != "0"] <- "1"
+df$Glazing.area.distr = as.factor(as.numeric(df$Glazing.area.distr))
+```
+
+
+##Clustering
+
+Ici, nous utiliserons l'analyse en composantes principales (ACP) et le classement ascendant hiérarchique dans le but de découvrir des clusters dans nos données.
+
+
+&nbsp;
+
+Il est intéressant ici de tenter de se représenter notre nuage de points initialement dépendant de 8 variables en seulement 2 variables. Pour cela on va utiliser la technique de l'ACP qui consiste à trouver les meilleures combinaisons linéaires de variables pré-existantes, au sens d'une maximisation de l'inertie projetée : 
+
+```{r, fig.height = 2.5, fig.width = 7, fig.align="center"}
+resacp <- PCA(df,scale.unit = TRUE, ncp = 2, quali.sup = c(6, 8, 10), quanti.sup = 9, graph = FALSE)
+par(mfrow = c(1, 2))
+plot1 = fviz_pca_ind(resacp)
+plot2 = fviz_pca_ind(resacp, col.ind = resacp$ind$coord[,1]>0, legend.title="dim 1 > 0", title = "Groupes visuels")
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+```{r, fig.height = 2.5, fig.width = 5, fig.align="center"}
+fviz_pca_ind(resacp, col.ind = df$Energy.efficiency %in% c("A", "B"), legend.title="ind in {A,B}", title = "Groupes selon l'appartenance à {A,B} ou {C,D,E,F,G}")
+```
+
+```{r, fig.height = 2.5, fig.width = 7, fig.align="center"}
+eig.val <- get_eigenvalue(resacp)
+par(mfrow= c(1,2))
+plot3 = fviz_pca_var(resacp, col.var = "black")
+plot4 = fviz_eig(resacp, addlabels = TRUE, ylim = c(0, 70))
+grid.arrange(plot3, plot4, ncol=2)
+
+```
+
+
+On voit que 82% de l'information est considérée en ne gardant que les deux premières composantes principales. 
+On voit de plus visuellement l'apparition de deux groupes distincts. En coloriant les points en fonction de leur appartenance à la classe énergétique {A,B} ou {C,D,E,F,G}, il semble y avoir une corrélation avec cette classification. 
+Le cercle des corrélations nous confirme les corrélations précédemment trouvées dans le corrplot. De plus on voit bien que l'information relative aux variables *Relative.compactness*, *Overall.height*, *Surface.area* et *Roof.area* est portée principalement par la première composante principale, et la variable *Wall.area* est principalement portée par la deuxième composante principale. 
+
+On va donc tenter de vérifier par hierarchical clustering qu'il est possible de construire deux classes à partir de nos données :
+
+```{r, warning=FALSE, fig.height = 3, fig.width = 6, fig.align="center"}
+x = as.matrix(df)
+colnames(x) <- 1:ncol(x)
+hc = hclust(dist(x), method = 'ward.D2')
+par(mfrow=c(1,2))
+plot(hc)
+rect.hclust(hc,k=2)
+plot(sort(hc$height, decreasing = TRUE)[1:20], 
+     xlab = "nb of classes",
+     ylab = "height")
+```
+
+Cette méthode de classification hiérarchique montre qu'on peut diviser nos données en deux classes distinctes. En effet, on distingue ici que le plus gros saut a lieu lorsque l'on sépare nos données en 2 classes. 
+
+Ceci conforte notre résultat précédemment évoqué lors de notre Analyse en Composantes Principales. 
+
+
+#Modèles Linéaires
+
+Dans cette section, nous allons tenter de trouver le modèle linéaire le plus approprié pour modéliser nos données.
+
+Pour cela,  nous chercherons dans un premier temps le meilleur modèle linéaire pour expliquer la variable *Energy*. Puis dans un second temps, nous nous intéresserons à la variable de sortie *Energy.efficiency* en écrivant un modèle linéaire généralisé.
+
+Tous les modèles étudiés ne comprennent pas la variable *Surface.area* car nous avons montré que : $Surface.area = 2*Roof.area \ + \ Wall.area$.
+
+
+## Avec les variables quantitatives
+
+Dans un premier temps, nous allons comparer des modèles sans les variables qualitatives.
+
+Pour commencer, prenons un modèle linéaire avec toutes les interactions des variables.
+
+```{r}
+mod_quanti_int = 
+  lm(Energy ~ (. - Energy.efficiency - Glazing.area.distr - orientation - Surface.area)^2, 
+     data = df)
+```
+
+On obtient un $R^2$ ajusté de 0.90. Nous allons essayer de simplifier ce modèle en utilisant le critère AIC.
+
+```{r, results='hide'}
+stepAIC(mod_quanti_int)
+```
+
+Le modèle proposé par le critère AIC est le suivant : 
+$$\begin{aligned}  \text {Energy} \sim & Relative.compactness + Wall.area + Roof.area + Overall.height + Glazing.area \\ &+ Relative.compactness*(Roof.area + Overall.height + Glazing.area) \\ &+ Wall.area*(Roof.area + Overall.height + Glazing.area) + Roof.area*Overall.height \end{aligned}$$
+
+Testons ce modèle :
+
+```{r}
+mod_quanti_int_simplifie= lm(formula = Energy ~ Relative.compactness + Wall.area + 
+                               Roof.area + Overall.height + Glazing.area + 
+                               Relative.compactness:Roof.area + Relative.compactness:Overall.height + 
+                               Relative.compactness:Glazing.area + Wall.area:Roof.area +
+                               Wall.area:Overall.height + Wall.area:Glazing.area + 
+                               Roof.area:Overall.height, data = df)
+```
+```{r, results='hide', echo = TRUE}
+anova(mod_quanti_int_simplifie, mod_quanti_int)
+```
+
+Le test de sous-modèle nous donne une p-value de $0.9896$. On ne rejette donc pas H0 et on garde le sous-modèle donné par stepAIC. Avec ce modèle simplifié, on garde le même $R^2$ ajusté mais en ayant enlevé trois interactions entre les variables. En revanche, nous avons tout de même un modèle lourd avec beaucoup d'intéractions. 
+
+Les interactions entre variables rendent le modèle pesant. A présent, nous allons enlever les intéractions et prendre un modèle additif et voir si les intéractions sont nécessaires à la fiabilité de notre modèle.
+
+```{r}
+mod_quanti = lm(Energy ~ . - Energy.efficiency - Glazing.area.distr - orientation - Surface.area, data = df)
+summary(mod_quanti)
+```
+
+Ce modèle a un $R^2 = 0.8755$ et ne contient que $5$ variables. Nous pouvons remarquer que le test de nullité de la variable *Wall.area* nous donne une p-value proche de 1, ce qui nous permettrait d'accepter la nullité de cette variable. Regardons plus en détail si d'autres variables sont susceptibles d'être supprimées du modèle.
+
+Pour cela, utilisons une méthode de séléction de variable type BIC :
+
+```{r, fig.align="center", fig.height = 4, fig.width = 6}
+choix = regsubsets(Energy ~ . - Energy.efficiency - Glazing.area.distr - orientation - Surface.area, data = df, nbest = 1, nvmax = 5, method = "backward")
+plot(choix, scale = "bic")
+```
+
+On en conclut qu'on pourrait à priori n'enlever que la variable *Wall.area*. 
+
+Verifions cela par un test de sous-modèle de Fisher : 
+
+```{r}
+mod_quanti_simplifie = lm(Energy ~ . - Energy.efficiency - Glazing.area.distr - orientation - Surface.area - Wall.area, data = df)
+```
+
+```{r, results='hide', echo = TRUE}
+anova(mod_quanti_simplifie, mod_quanti)
+```
+
+On obtient une p-value de $0.9953$ donc on accepte le sous-modèle. Pour ce modèle simplifié sans interactions, on obtient un $R^2$ ajusté de $0.88$. Ce résultat est certes légèrement plus faible que ce que nous avions obtenu avec les intéractions mais notre nouveau modèle contient bien moins de variables que le précédent. 
+
+Donc finalement, le modèle retenu dans cette partie est : 
+$$ Energy \sim Relative.compactness +  Roof.area + Overall.height + Glazing.area $$ 
+
+
+Testons maintenant l'efficacité de la prédiction de ce modèle. Pour cela, nous divisons notre jeu de données en un jeu d'entraînement de notre modèle et un jeu de test. Nous entrainons ensuite notre modèle sur le jeu d'entrainement, et nous le testons sur notre jeu de test.  
+
+```{r}
+n = nrow(df)
+set.seed(0)
+learnSet_ml = sample(1:n, size = floor(n*4/5))
+testSet_ml = setdiff(1:n, learnSet_ml)
+build_ml1 = df[,-c(2,3,6,8)]
+buildR_ml1 = build_ml1[, -6]
+buildC_ml1 = build_ml1[, -5]
+buildRlearn_ml1 = buildR_ml1[learnSet_ml,]
+buildRtest_ml1 = buildR_ml1[testSet_ml,]
+buildCtest_ml1 = buildC_ml1[testSet_ml,]
+```
+
+```{r}
+M = fit(Energy ~ ., data = buildRlearn_ml1 , model = "lm")
+```
+
+```{r}
+P = predict(M, buildRtest_ml1)
+pred_values = cut(P, breaks = c(-1, 30, 35, 45, 55, 65, 75, 100),  labels = c("A", "B", "C", "D", "E", "F", "G"))
+tabMLquanti = table(buildCtest_ml1$Energy.efficiency, pred_values)
+res_pred = sum(diag(tabMLquanti))/sum(tabMLquanti)
+```
+
+Ce premier modèle a un taux de bonnes prédictions de `r round(res_pred*100, digits = 2)`%.  
+
+
+## Ajout des variables qualitatives 
+
+A présent, nous allons tenter de compléter notre modèle en y ajoutant les variables qualitatives.
+
+De la même manière que dans la première partie, nous allons utiliser le critère AIC pour simplifier le modèle avec toutes les intéractions entre les variables.
+
+```{r, results='hide'}
+mod_complet_int = lm(Energy ~ (.-Energy.efficiency - Surface.area)^2, data = df)
+stepAIC(mod_complet_int)
+```
+
+Le modèle proposé par le critère AIC est le suivant : 
+$$\begin{aligned}  \text {Energy} \sim & Wall.area*Glazing.area.distr + Relative.compactness*Glazing.area.distr \\ &+ Roof.area*Overall.height + Relative.compactness*Overall.height + Roof.area*Glazing.area \\ &+  + Relative.compactness*Overall.height + Wall.area*Roof.area + Wall.area*Overall.height \end{aligned}$$
+
+Faisons un test de sous-modèle de Fisher pour voir la validité de ce sous-modèle :
+
+```{r}
+mod_complet_aic = lm(Energy ~ Wall.area:Glazing.area.distr + Relative.compactness:Glazing.area.distr + 
+                       Roof.area:Overall.height + Relative.compactness:Overall.height + 
+                       Roof.area:Glazing.area + Relative.compactness:Overall.height + 
+                       Wall.area:Roof.area + Wall.area:Overall.height, data = df)
+```
+```{r,  results='hide', echo = TRUE}
+anova(mod_complet_aic, mod_complet_int)
+```
+
+On obtient une $pvalue = 2.2*10^{-16}$ ce qui nous amène à rejeter ce modèle.
+
+Essayons de prendre un modèle additif avec toutes les variables de notre jeu de données et utilisons le critère AIC pour faire notre sélection de variables:
+
+```{r, results='hide'}
+mod_complet = lm(Energy ~ .-Energy.efficiency - Surface.area, data = df)
+stepAIC(mod_complet)
+```
+
+Le modèle proposé est : $$ Energy \sim Glazing.area.distr + Roof.area + Glazing.area + Overall.height + Relative.compactness $$
+
+Testons ce modèle :
+
+```{r}
+mod_complet_aic2 = lm(Energy ~ Glazing.area.distr + Roof.area + Glazing.area + 
+                        Overall.height + Relative.compactness, data = df)
+```
+```{r, results='hide', echo = TRUE}
+anova(mod_complet_aic2, mod_complet)
+```
+
+Le test de sous-modèle nous donne une $pvalue = 0.6774$. Nous pouvons donc accepter ce modèle qui nous permet d'avoir un $R^2$ ajusté de $0.8801$.  
+
+Cette étude de modèle linéaire associant variables quantitatives et qualitatives nous amène à considérer le modèle suivant : 
+$$Energy \sim Glazing.area.distr + Roof.area + Glazing.area + Overall.height + Relative.compactness$$
+
+De même que précédemment, nous allons tester la prédiction de ce modèle. 
+
+```{r}
+build_ml2 = df[,-c(2,3,6)]
+buildR_ml2 = build_ml2[, -7]
+buildC_ml2 = build_ml2[, -6]
+buildRlearn_ml2 = buildR_ml2[learnSet_ml,]
+buildRtest_ml2 = buildR_ml2[testSet_ml,]
+buildCtest_ml2 = buildC_ml2[testSet_ml,]
+```
+
+```{r}
+M2 = fit(Energy ~ ., data = buildRlearn_ml2 , model = "lm")
+P2 = predict(M2, buildRtest_ml2)
+pred_values2 = cut(P2, breaks = c(-1, 30, 35, 45, 55, 65, 75, 100),  labels = c("A", "B", "C", "D", "E", "F", "G"))
+tabML = table(buildCtest_ml2$Energy.efficiency, pred_values2)
+res_pred2 = sum(diag(tabML))/sum(tabML)
+```
+
+Ce deuxième modèle plus complet a un taux de bonnes prédictions de `r round(res_pred2*100, digits = 2)`%. Celui-ci est plus faible que le modèle précédent avec seulement les variables quantitatives. Ceci peut s'expliquer par un phénomène d'overfitting dû au nombre plus élevé de variables dans ce modèle. 
+
+## Modèles Linéaires Généralisés 
+
+Nous avons pu montrer dans l'ACP que la variable de sortie *Energy_efficiency* se divise en deux classes majeures : la première contenant les modalités {A, B} et l'autre avec les modalités {C, D, E, F, G}. 
+
+Créons donc une nouvelle variable de sortie *Energy.efficiency.bis* binaire qui prend la valeur 1 lorsque les modalités sont dans {A, B} et 0 sinon :
+
+```{r, fig.height = 2.4, fig.width = 4, fig.align="center"}
+df$Energy.efficiency.bis = integer(length(df$Energy.efficiency))
+for (i in 1:length(df$Energy.efficiency.bis))
+  if (df$Energy.efficiency[i] == "A" || df$Energy.efficiency[i] == "B")
+    df$Energy.efficiency.bis[i] = 1
+df$Energy.efficiency.bis = as.factor(df$Energy.efficiency.bis)
+barplot(table(df$Energy.efficiency.bis),main="Energy.efficiency.bis")
+```
+
+Dans cette partie, nous écrirons un modèle de régression logistique multiple additif afin d'expliquer *Energy.efficiency.bis* en fonction de toutes les autres variables : 
+
+```{r}
+df_bis = subset(df, select = -c(Energy,Energy.efficiency))
+mod_log = glm(Energy.efficiency.bis~., data = df_bis, family = binomial(link = "logit"))
+summary(mod_log)
+```
+
+
+Nous pouvons remarquer dans le résumé de ce modèle additif que plusieurs variables ont une p-value de leur Z-Test bien supérieure à $5$%. Il est donc judicieux d'utiliser des algorithmes de séléctions de variables pour simplifier ce modèle.
+
+Pour cela, nous allons utiliser les méthodes de séléction de variables par critères BIC et AIC. 
+
+```{r, results='hide', warning=FALSE, message=FALSE, error=FALSE}
+mod_log_bic = bestglm(df_bis, family = binomial, IC = "BIC")
+mod_log_bic$BestModel
+```
+
+Le modèle proposé par le critère BIC est le suivant : 
+$$logit(\pi_i) = \theta_0 + \theta_1\ Relative.compactness_i + \theta_2\ Overall.height_i + \theta_3\ Glazing.area_i + \theta_4\ \mathbb{1}_{Glazing.area.distr = 2}$$
+
+```{r, echo=FALSE, results='hide'}
+summary(mod_log_bic)
+```
+
+
+```{r}
+mod_log.bic = glm(Energy.efficiency.bis~Relative.compactness + Overall.height + Glazing.area + 
+                    Glazing.area.distr, data = df_bis, family = binomial(link = "logit"))
+```
+
+
+```{r, results='hide', warning=FALSE, message=FALSE, error=FALSE}
+mod_log_aic = bestglm(df_bis, family = binomial, IC = "AIC")
+mod_log_aic$BestModel
+```
+
+Le modèle proposé par le critère AIC est le suivant : 
+$$logit(\pi_i) = \theta_0 + \theta_1\   Relative.compactness_i + \theta_2\   Overall.height_i + \theta_3\   Glazing.area_i + \theta_4\ Roof.area_i + \theta_5\   \mathbb{1}_{Glazing.area.distr = 2}$$
+  
+
+```{r, echo=FALSE, results='hide'}
+summary(mod_log_aic)
+```
+
+
+```{r}
+mod_log.aic = glm(Energy.efficiency.bis~Relative.compactness + Overall.height + Glazing.area + 
+                    Roof.area + Glazing.area.distr, data = df_bis, family = binomial(link = "logit"))
+```
+
+Nous pouvons remarquer que la variable *Roof.area* est présente sur le modèle selectionné avec le critère AIC mais pas sur celui avec le critère BIC. 
+
+Dans une optique de simplification de notre modèle, on se propose de garder le modèle avec le moins de paramètres, donc celui généré avec le critère BIC.
+
+Faisons un test d'ANOVA pour vérifier la validité de notre modèle :  
+```{r, results='hide', echo = TRUE}
+anova(mod_log.bic, mod_log, test="Chisq")
+```
+
+On obtient une p-value de 0.59, on ne rejette pas le sous modèle. Le modèle simplifié séléctionné est donc : 
+$$logit(\pi_i) = \theta_0 + \theta_1\   Relative.compactness_i + \theta_2\ Overall.height_i + \theta_3\   Glazing.area_i + \theta_4\   \mathbb{1}_{Glazing.area.distr = 2}$$
+
+```{r}
+modelbest.log = mod_log.bic
+```
+
+Afin de vérifier le pouvoir prédictif de notre modèle, comparons les valeurs de la variable réponse avec celles des valeurs prédites dans une table de contingence : 
+
+```{r}
+hatpi = modelbest.log$fitted.values
+tabmodlog = table(df_bis$Energy.efficiency.bis, hatpi>0.5)
+tabmodlog
+resmodlog = sum(diag(tabmodlog))/sum(tabmodlog)
+```
+
+Nous pouvons constater que la prédiction faite avec ce modèle permet de trouver dans `r round(resmodlog*100, digits = 2)`% des cas la bonne classe énergétique.
+
+Il y a tout de même encore `r 100-round(resmodlog*100, digits = 2)`% des cas où l'energie est dans la catégorie {C,D,E,F,G} mais est prédite dans la catégorie {A,B}, ce qui reste quand même raisonnable. 
+
+Remarque : nous avons essayé d'implémenter le modèle polytomique, mais sans succès.
+
+#Modèles Non-Linéaires
+
+```{r}
+n = nrow(df)
+set.seed(0)
+learnSet = sample(1:n, size = floor(n*4/5))
+testSet = setdiff(1:n, learnSet)
+build = df[,-c(4, 11)]
+buildR = build[, - 9]
+buildC = build[, - 8]
+buildRlearn = buildR[learnSet,]
+buildRtest = buildR[testSet,]
+buildClearn =  buildC[learnSet,]
+buildCtest = buildC[testSet,]
+```
+
+Dans cette section, nous allons écrire plusieurs modèles non-linéaires du type : arbre de classification et de régréssion, et forêts aléatoires.
+
+##Arbres
+
+Dans cette partie, nous allons générer des arbres de régression afin d'expliquer notre variable quantitative de sortie *Energy*, ainsi que des arbres de classification pour expliquer la variable qualitative *Energy.efficiency*.
+Enfin, nous analyserons les résultats obtenus pour les deux arbres. 
+
+
+###Arbre de régression
+
+On génère ici un arbre de régression afin d'estimer la valeur de l'énergie émise de la variable *Energy*, et de pouvoir la classifier.
+
+```{r, fig.align="center", fig.height = 3.5, fig.width = 5}
+tree.reg=rpart(Energy ~ . ,data=buildRlearn ,control=rpart.control(cp=0.001))
+```
+
+Le critère de pénalisation que nous avons choisi par défaut est une valeur prise arbitrairement, à savoir : $C_p = 0.001$. 
+
+Avant d'analyser plus en détail notre arbre de régréssion, on va chercher quel critère de pénalisation permet de réduire au maximum l'erreur. 
+```{r}
+xmat <- xpred.rpart(tree.reg)
+xerr <- (xmat-buildRlearn[,"Energy"])^2
+CVerr <- apply(xerr, 2, sum)
+cpMin <- as.numeric(attributes(which.min(CVerr))$names)
+```
+
+Après calcul, on obtient un critère de pénalisation optimale $Cp_{min} = `r cpMin`$ 
+
+On le ré-injecte dans l'arbre:
+```{r, fig.align="center",fig.height = 4, fig.width = 6}
+tree.reg <- rpart(Energy ~ . ,data=buildRlearn , control = rpart.control(cp = cpMin))
+rpart.plot(tree.reg)
+```
+
+Nous pouvons remarquer que les variables qui reviennent essentiellement sont : $Glazing.area$, $Wall.area$, $Surface.area$ et $Relative.compactness$.
+
+Etudions à présent les résidus ainsi que les valeurs ajustées. On se propose dans un premier temps d'afficher les valeurs prédites en fonction des vraies valeurs, ainsi que les résidus : 
+```{r}
+fit.tree <- predict(tree.reg)
+res.tree <- fit.tree - buildRlearn[, "Energy"]
+```
+
+```{r, fig.height = 2.5, fig.width = 6, fig.align="center"}
+par(mfrow=c(1,2))
+plot(buildRlearn$Energy, fit.tree)
+abline(a = 0, b = 1)
+plot(fit.tree, res.tree, 
+     col = "blue", pch = 20,
+     ylab = "Résidus", xlab = "Valeurs prédites")
+abline(h = 0, lty = "dotted")
+```
+
+```{r, results = 'hide'}
+sd(fit.tree)
+```
+
+La structure en 'strates' est due au fait que les valeurs proches en feuille terminale de l'arbre sont réunies. 
+Ici les valeurs prédites semblent suivre la droite de régression $y=x$, avec une dispersion assez faible (~5), ce qui conforte l'efficacité de cet arbre.   
+
+Les résidus sont centrés et il y a homoscédasticité ce qui exprime une stabilité de l'arbre relative à l'évolution des valeurs prédites. On retrouve la structure en 'strates' précédante due au fait qu'on ne prédit que des valeurs en sortie d'arbre. L'écart type de 19 est tout de même un peu élevé comparé à la grandeur des intervales correspondants aux classes d'énergie qui sont d'environ 10.   
+
+### Arbre de Classification
+
+On génère ici un arbre de classification afin de prédire la classe d'appartenance de l'énergie de la variable *Energy.efficiency*. 
+
+```{r, warning=FALSE, fig.align="center", fig.height = 3.5, fig.width = 5}
+tree.dis <- rpart(Energy.efficiency ~ ., 
+                  data = buildClearn, 
+                  parms = list(split = "information"), 
+                  cp = 0.001)
+```
+
+Nous faisons les même calculs que pour l'arbre de régression afin de trouver le critère de pénalité le plus petit possible.
+
+```{r}
+xmat <- xpred.rpart(tree.dis)
+xerr <- as.numeric(buildClearn$Energy.efficiency) != xmat
+CVerr <- apply(xerr, 2, sum)/nrow(xerr)
+cpMin <- as.numeric(attributes(which.min(CVerr))$names)
+```
+
+On obtient un critère de pénalisation optimale $Cp_{min} = `r cpMin`$ qui minimise au maximum l'erreur.
+
+On le ré-injecte dans l'arbre : 
+```{r, warning=FALSE, fig.align="center", fig.height = 4, fig.width = 6}
+tree.dis <- rpart(Energy.efficiency ~ .,
+                  data = buildClearn,
+                  parms = list(split = "information"),
+                  cp = cpMin)
+rpart.plot(tree.dis, box.palette = list("green", "red", "pink", "blue", "yellow", "orange", "white"))
+```
+
+###Analyse des arbres :
+
+Dans cette section, nous allons analyser le pouvoir de prédiction et l'erreur associés à nos deux arbres obtenus précédemment. 
+
+```{r}
+pred.treer <- predict(tree.reg, newdata = buildRtest)
+pred.treeq <- predict(tree.dis, newdata = buildCtest, type="class")
+```
+
+En s'aidant des seuils prédéfinis, on va classifier nos prédictions de notre régression dans les classes {A,B,C,D,E,F,G}.
+
+```{r}
+pred.treerClass <- cut(pred.treer, 
+                       breaks = c(-1, 30, 35, 45, 55, 65, 75, 100),  
+                       labels = c("A", "B", "C", "D", "E", "F", "G"))
+```
+
+Pour conclure, nous pouvons à présent établir les tables de contingence pour la classification et la régression: 
+```{r}
+tabCtree <- table(pred.treeq, buildCtest$Energy.efficiency)
+tabCtree
+tabRtree <- table(pred.treerClass, buildCtest$Energy.efficiency)
+tabRtree
+classRateTreeC <- sum(diag(tabCtree))/sum(tabCtree)
+classRateTreeR <- sum(diag(tabRtree))/sum(tabRtree)
+```
+
+Pour l'arbre de régression, la proportion des bonnes prévisions est de `r round(classRateTreeR*100, digits = 2)`%. En ce qui concerne l'arbre de classification, la proportion est de `r round(classRateTreeC*100, digits = 2)`%.
+
+## Random Forest
+
+Afin d'étendre notre étude faite sur les arbres de décision, nous allons nous intéresser dans cette section aux forêts aléatoires. Comme pour les arbres, nous étudierons les forêts aléatoires de régression et de classification afin de travailler sur les sorties *Energy* et *Energy.efficiency*.
+
+Une fois ces deux premiers points étudiés, nous veillerons à améliorer les performances de notre algorithme de Random Forest en choisissant le paramètre "mtry" optimal. Ce paramètre représente le nombre de variables échantillonnées aléatoirement comme candidats à chaque "split".
+
+### Forêt aléatoire de régression
+
+Commençons par l'explication et la prédiction de la variable quantitative *Energy*.
+
+```{r}
+mForestR <- randomForest(x = buildRlearn[, -8], y = buildRlearn[, 8], xtest = buildRtest[, -8],
+                         ytest = buildRtest[, 8], importance = TRUE)
+```
+
+```{r, fig.height = 3.25, fig.width = 6, fig.align="center"}
+mForestR.pred <- mForestR$test$predicted
+pred.forestClass <- cut(mForestR.pred, 
+                        breaks = c(-1, 30, 35, 45, 55, 65, 75, 100),  
+                        labels = c("A", "B", "C", "D", "E", "F", "G"))
+tabRforest <- table(buildCtest[, 8], pred.forestClass)
+classRateRforest <- sum(diag(tabRforest))/sum(tabRforest)
+varImpPlot(mForestR)
+```
+
+A l'aide de ces deux graphiques, nous avons la possibilité de connaître, par deux méthodes différentes, quelles sont les variables qui impactent le plus notre modèle. Il est donc nécessaire de choisir judicieusement les variables qui se démarquent dans les deux méthodes.
+ 
+Dans la première méthode `Increase MSE`, deux variables se démarquent : `Glazing.area` car elle est la plus précise et `orientation` car elle est la moins précise. Puis nous avons plusieurs variables qui sont quelques peu équivalentes. 
+ 
+La deuxième méthode `Increase Node Purity` distingue principalement trois variables : `Overall.height`, `Relative.compactness` et `Surface.area`.
+ 
+Un modèle que nous pourrions proposé pour être en adéquation avec ces résultats serait le suivant : 
+$$Energy \sim Glazing.area + Overall.height + Surface.area + Relative.compactness$$
+
+Cet arbre de régression nous donne un pourcentage de bonnes prédictions de `r round(classRateRforest * 100, digits = 2) `%. 
+ 
+### Forêt aléatoire de classification
+
+Voyons à présent si le fait d'avoir discrétiser la variable *Energy* en plusieurs classes énergétiques améliore le taux de bonnes prédictions.
+
+```{r}
+mForestC <- randomForest(x = buildClearn[, -8], y = buildClearn[, 8],
+                         xtest = buildCtest[, -8], ytest = buildCtest[, 8],
+                         importance = TRUE)
+```
+
+```{r, fig.height = 3.25, fig.width = 6, fig.align="center"}
+mForestC.pred <- mForestC$test$predicted
+tabCforest <- table(buildCtest[, 8], mForestC.pred)
+classRateCforest <- sum(diag(tabCforest))/sum(tabCforest)
+mForestC$test$confusion
+varImpPlot(mForestC)
+```
+
+Nous pouvons remarquer que les deux graphiques ont le même "Top 4" mais dans un ordre différent. Nous pouvons donc nous limiter à ces 4 premières variables. 
+L'algorithme de forêt aléatoire de classification nous permet donc d'écrire le modèle suivant : 
+$$Energy.efficiency \sim Glazing.area + Wall.area + Surface.area + Relative.compactness$$
+
+Cette forêt aléatoire de classification nous donne un pourcentage de bonnes prédictions de `r round(classRateCforest * 100, digits = 2)`%.
+
+### Optimisation des forêts
+
+L'algorithme de Random Forest implémenté dans R possède des valeurs par défaut du paramètre "mtry" qui varient selon le choix de la méthode utilisée : classification ou régression. Nous verrons dans chaque partie quelle est cette valeur et comment nous pouvons l'optimiser. 
+
+####Régression
+
+Lorsque nous faisons de la régression, la valeur par défaut choisie est $mtry = \frac{p}{3}$ où p est le nombre de variables de notre jeu de données. Dans notre étude, nous avons $p = 7$, donc étant donné que notre paramètre est un entier, on aurait par défaut :  $mtry = 2$.
+
+Calculons, par validation croisée, l'erreur quadratique moyenne RMSE selon les valeurs du mtry :
+```{r, warning = FALSE, message=FALSE, error=FALSE}
+cvControl = trainControl(method = "cv", number = 10)
+mForestFitR = train(buildRlearn[,-8], buildRlearn[,8], method = "rf", tuneLength = 8,
+               trControl = cvControl, trace = FALSE)
+```
+
+```{r,fig.height = 2, fig.width = 4, fig.align="center"}
+plot(mForestFitR)
+```
+
+L'objectif étant de minimiser l'erreur, nous pouvons remarquer sur la figure précédente que le mtry optimal est égal à 3. 
+
+Nous reconstruisons alors notre forêt de régression en précisant $mtry=3$.
+
+```{r}
+mForestRFit <- randomForest(x = buildRlearn[, -8], y = buildRlearn[, 8], xtest = buildRtest[, -8], 
+                            ytest = buildRtest[, 8],importance = TRUE, mtry = 3)
+```
+
+```{r}
+mForestRFit.pred <- mForestRFit$test$predicted
+pred.forestClassFit <- cut(mForestRFit.pred, 
+                        breaks = c(-1, 30, 35, 45, 55, 65, 75, 100),  
+                        labels = c("A", "B", "C", "D", "E", "F", "G"))
+tabRforestFit <- table(buildCtest[, 8], pred.forestClassFit)
+classRateRforestFit <- sum(diag(tabRforestFit))/sum(tabRforestFit)
+```
+
+On trouve un pourcentage de bonnes prédictions de `r round(classRateRforestFit * 100, digits = 2)` %, ce qui est désormais notre meilleur prédicteur.
+
+####Classification
+
+Lorsque nous faisons de la classification, la valeur par défaut choisie est $mtry = \sqrt(p)$. Nous aurions donc par défaut :  $mtry = 3$.
+
+Effectuons le même calcul que précédemment mais qui, pour une forêt de classification, nous donne la précision du modèle :
+```{r, warning = FALSE, message=FALSE, error=FALSE}
+cvControl = trainControl(method = "cv", number = 10)
+mForestFitC = train(buildClearn[,-8], buildClearn[,8], method = "rf", tuneLength = 8,
+               trControl = cvControl, trace = FALSE)
+```
+
+```{r,fig.height = 2, fig.width = 4, fig.align="center"}
+plot(mForestFitC)
+```
+
+Nous pouvons voir que la précision est maximale lorsque $mtry=2$. Nous reconstruisons alors notre forêt  avec cette nouvelle valeur du paramètre : 
+
+```{r}
+mForestC_tuned <- randomForest(x = buildClearn[, -8], y = buildClearn[, 8],
+                         xtest = buildCtest[, -8], ytest = buildCtest[, 8],
+                         importance = TRUE, mtry = 2)
+```
+
+```{r}
+mForestC_tuned.pred <- mForestC_tuned$test$predicted
+tabCforest_tuned <- table(buildCtest[, 8], mForestC_tuned.pred)
+classRateCforest_tuned <- sum(diag(tabCforest_tuned))/sum(tabCforest_tuned)
+```
+
+Cet arbre de classification avec amélioration du paramètre mtry nous donne un pourcentage de bonnes prédictions de `r round(classRateCforest_tuned * 100, digits = 2)`% ce qui est légèrement mieux qu'avec le mtry par défaut.
+
+
+##Modèles non linéaires pour deux catégories : {A,B} et {C,D,E,F,G}
+
+Nous avions vu dans la section "Analyse des données" que la variable *Energy.efficiency* peut être séparée en deux classes. Cherchons un sous-modèle qui repose sur ces deux classes. 
+
+On sépare nos données en un ensemble de test et un ensemble d'entraînement. 
+```{r}
+nbis = nrow(df_bis)
+set.seed(0)
+learnSetbis = sample(1:nbis, size = floor(nbis*4/5))
+testSetbis = setdiff(1:nbis, learnSetbis)
+buildCbis = df_bis[,-4]
+buildClearnbis =  buildCbis[learnSetbis,]
+buildCtestbis = buildCbis[testSetbis,]
+```
+
+On génère ici un arbre de classification afin de prédire la classe d'appartenance de l'énergie de la variable *Energy.efficiency* parmi les classes : 
++ 1 = {A,B}
++ 2 = {C,D,E,F,G}
+
+```{r, warning=FALSE, fig.height = 2.3, fig.width = 4, fig.align="center"}
+tree.disbis <- rpart(Energy.efficiency.bis ~ ., 
+                  data = buildClearnbis, 
+                  parms = list(split = "information"), 
+                  cp = 0.001)
+```
+
+Nous faisons les même calculs que pour l'arbre de classification précédent afin de trouver le critère de pénalité le plus petit possible.
+
+```{r}
+xmatbis <- xpred.rpart(tree.disbis)
+xerrbis <- as.numeric(buildClearnbis$Energy.efficiency.bis) != xmatbis 
+CVerrbis <- apply(xerrbis, 2, sum)/nrow(xerrbis)
+cpMinbis <- as.numeric(attributes(which.min(CVerrbis))$names)
+```
+
+On obtient un critère de pénalisation optimal $Cp_{min} = `r cpMinbis`$ qui minimise au maximum l'erreur.
+
+On le ré-injecte dans l'arbre : 
+```{r, warning=FALSE, fig.height = 3, fig.width = 4.5, fig.align="center"}
+tree.disbis <- rpart(Energy.efficiency.bis ~ .,
+                  data = buildClearnbis,
+                  parms = list(split = "information"),
+                  cp = cpMinbis)
+rpart.plot(tree.disbis, box.palette = list("green", "red"))
+```
+
+```{r}
+pred.treeqbis <- predict(tree.disbis, newdata = buildCtestbis, type="class")
+tabCtreebis <- table(pred.treeqbis, buildCtestbis$Energy.efficiency.bis)
+classRateTreeCbis <- sum(diag(tabCtreebis))/sum(tabCtreebis)
+```
+Nous avons ici une proportion de bonnes prévisions de `r round(classRateTreeCbis*100, digits = 2)`%.
+
+#Conclusion
+
+
+##Récapitulatif des résultats de prédiction
+
+|                           | Classification en 2 classes                   | Classification en 7 classes                          | Régression (puis découpage)                       |
+|---------------------------|-----------------------------------------------|------------------------------------------------------|---------------------------------------------------|
+| Régression linéaire       |                                               |                                                      | `r round(res_pred*100, digits = 2)`%                                 |
+| ANCOVA                    |                                               |                                                      | `r round(res_pred2*100, digits =2)`%                                |
+| Régression logistique     | `r round(resmodlog*100, digits = 2)`%         |                                                      |                                                   |
+| Arbre                     | `r round(classRateTreeCbis*100, digits = 2)`% | `r round(classRateTreeC*100, digits = 2)`%           | `r round(classRateTreeR*100, digits = 2)`%        |
+| Forêt aléatoire           |                                               | `r round(classRateCforest * 100, digits = 2)`%       | `r round(classRateRforest * 100, digits = 2) `%   |
+| Forêt aléatoire améliorée |                                               | `r round(classRateCforest_tuned * 100, digits = 2)`% | `r round(classRateRforestFit * 100, digits = 2)`% |
+
+
+##Récapitulatif des modèles :
+
+Régression linéaire : 
+$$Energy \sim Relative.compactness +  Roof.area + Overall.height + Glazing.area$$
+
+ANCOVA : 
+$$Energy \sim Glazing.area.distr + Roof.area + Glazing.area + Overall.height + Relative.compactness$$
+
+Régréssion logistique : (*Energy.efficiency* binaire)
+$$logit(\pi_i) = \theta_0 + \theta_1\   Relative.compactness_i + \theta_2\ Overall.height_i + \theta_3\   Glazing.area_i + \theta_4\   \mathbb{1}_{Glazing.area.distr = 2}$$
+
+Forêt aléatoire de régression : 
+$$Energy \sim Glazing.area + Overall.height + Surface.area + Relative.compactness$$
+
+Forêt aléatoire de classification : 
+$$Energy.efficiency \sim Glazing.area + Wall.area + Surface.area + Relative.compactness$$
+
+
+##Lien entre les modèles et l'analyse de données
+
+Dans notre analyse des données, nous avions relever certaines variables qui semblaient avoir un lien avec l'*Energy* et d'autres ne pas en avoir. Il est intéressant de comparer ces premières observations avec nos modèles obtenus. Nous avons conclu dans la première partie, que l'*Orientation* ne semblait pas avoir d'effet sur notre sortie. Cette première interprétation est en accord avec nos modèles, étant donné qu'aucun des modèles ne considère cette variable. De même, nous avions relevé l'impact des variables : *Overall.height*, *Relative.compactness* et *Surface.area*.  La variable *Overall.height* est présente dans 4 modèles sur 5 et *Relative.compactness* dans tous nos modèles. Rappelons que *Surface.area* a été exprimée en fonction de *Wall.area* et *Roof.area*. On remarque qu'au moins une de ces trois variables de surface est présente dans 4 modèles. Il est aussi intéressant de voir que *Glazing.area* est présente dans tous les modèles, alors que notre analyse bidimensionnelle ne tirait aucune conclusion de cette variable. 
+
+De plus, lorsque nous avons effectué le clustering sur nos données, deux classes se sont principalement démarquées : {A,B} et {C,D,E,F,G}. Au cours de notre étude, nous avons effectué une régression logistique et un arbre sur cette nouvelle variable de sortie binaire. Nous pouvons remarquer sur le tableau ci-dessus que les meilleurs taux de prédictions obtenus dans les différents modèles sont avec cette nouvelle variable. Le clustering était donc efficace car nous pouvons prédire la bonne appartenance aux deux groupes dans plus de $90$% des cas. 
+
+##Conclusion générale 
+
+Au cours de ce projet nous avons donc cherché à construire un modèle de prédiction de l'impact énergétique des bâtiments en fonction de nombreuses de leurs caractéristiques. L'étude s'est divisée en deux axes : la régression et la classification. Au sein même de la classification on a séparé l'étude en deux parties : la classification en sept classes {A,B,C,D,E,F,G} et en deux classes ({A,B} et {C,D,E,F,G}). A la vue du tableau récapitulatif des performances des modèles, on a constaté que les modèles non-linéaires entraînent des résultats plus performants que les modèles linéaires. Et ainsi, après optimisation de nos modèles non-linéaires, on a finalement remarqué que procéder à de la régression puis découper en sept classes donnait de meilleurs résultats que de travailler directement avec les classes. En effet, on a abouti au final à une forêt aléatoire avec un taux de réussite de 75%. 
+
+Parallèlement on a étudié une classification en deux classes, et celle-ci nous a donné un taux de bonnes prédictions de 94%. On a ici donc un modèle très performant pour ce problème. 
+
+Pour conclure, on a donc réussi à construire des modèles qui permettent de classer avec 75% de réussite les bâtiments dans une des sept classes énergétiques, et avec 94% de réussite dans une des classes parmi {A,B} et {C,D,E,F,G}. 
+
+Ainsi, dans l'optique d'améliorer le DPE des bâtiments, ce projet permettra de prédire quelle sera l'empreinte énergétique d'un bâtiment qu'il faut construire ou rénover, en fonction de ses caractéristiques. Il sera alors possible de moduler ces caractéristiques, dans le but de réduire les consommations en énergie des habitants. 
